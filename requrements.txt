@@ -1,2 +1,2 @@
 sqlalchemy[mysql]
-flask
+flask[async]

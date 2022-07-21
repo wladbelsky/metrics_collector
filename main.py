@@ -23,7 +23,7 @@ class Metric:
 
 
 @app.route('/metrics')
-def main():
+async def main():
     with Database().get_session() as session:
         count = session.query(Client).count()
         test_metric = Metric('test_metric', count, {'test': 1})
