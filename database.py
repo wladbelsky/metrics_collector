@@ -1,8 +1,10 @@
 import sqlalchemy
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy import CHAR, Column, Date, DateTime, Float, ForeignKey, String, Text, Time, text
 from sqlalchemy.dialects.mysql import INTEGER, SMALLINT, TINYINT, TINYTEXT
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.pool import NullPool
 
 Base = sqlalchemy.ext.declarative.declarative_base()
 metadata = Base.metadata
@@ -11,19 +13,22 @@ class Database(object):
     _instance: 'Database' = None
 
     def __init__(self) -> None:
-        self.engine = sqlalchemy.create_engine(self.prepare_connection_string(
+        self.engine = create_async_engine(self.prepare_connection_string(
             {
-                "engine": "mysql",
-                "host": "192.168.0.204",
+                "engine": "mysql+aiomysql",
+                "host": "p51vm",
                 "port": 3306,
                 "user": 'dbuser',
                 "password": 'dbpassword',
-                "database": 'p17_testspb'
+                "database": 's11'
             }
-        ), echo=True)
-        self.connection = self.engine.connect()
-        self.metadata = metadata
-        self.metadata.create_all(self.engine)
+        ), poolclass=NullPool, echo=True)
+        self.connection = None
+
+    async def connect(self):
+        if not self.connection:
+            self.connection = await self.engine.connect()
+            self.metadata = metadata
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -31,13 +36,19 @@ class Database(object):
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> 'Database':
+    async def get_instance(cls) -> 'Database':
         if not getattr(cls, '_instance', None):
             cls._instance = cls()
+        else:
+            await cls._instance.connect()
         return cls._instance
 
-    def get_session(self) -> sqlalchemy.orm.session.Session:
-        return sqlalchemy.orm.sessionmaker(bind=self.engine)()
+    @classmethod
+    async def get_class_session(cls) -> AsyncSession:
+        return (await cls.get_instance()).get_session()
+
+    def get_session(self) -> AsyncSession:
+        return sqlalchemy.orm.sessionmaker(bind=self.engine, class_=AsyncSession)()
 
     def insert_if_not_exsits(self, table, **data):
         with self.get_session() as session:

@@ -1,0 +1,6 @@
+IEMK_STATUS_2 = """
+SELECT COUNT(id) FROM logger.IEMKEventLog WHERE status = 2 AND sendDate REGEXP DATE_SUB(DATE(NOW()), INTERVAL 1 DAY);
+"""
+IEMK_STATUS_3 = """
+SELECT COUNT(id) FROM logger.IEMKEventLog WHERE status = 3 AND sendDate REGEXP DATE_SUB(DATE(NOW()),INTERVAL 1 DAY);
+"""
