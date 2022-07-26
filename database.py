@@ -48,7 +48,7 @@ class Database(object):
             return session.query(table).filter_by(**data).first() if not result else result
 
     @staticmethod
-    def prepare_connection_string(config: dict):
+    def prepare_connection_string(config: dict) -> str:
         user = config.get('user') or ''
         password = config.get('password') or ''
         host = config.get('host')
