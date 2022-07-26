@@ -9,43 +9,32 @@ from sqlalchemy.pool import NullPool
 Base = sqlalchemy.ext.declarative.declarative_base()
 metadata = Base.metadata
 
-class Database(object):
-    _instance: 'Database' = None
 
-    def __init__(self) -> None:
+class Database(object):
+    def __init__(self, connection: dict) -> None:
         self.engine = create_async_engine(self.prepare_connection_string(
-            {
-                "engine": "mysql+aiomysql",
-                "host": "p51vm",
-                "port": 3306,
-                "user": 'dbuser',
-                "password": 'dbpassword',
-                "database": 's11'
-            }
+            connection
         ), poolclass=NullPool, echo=True)
+        self.host = connection.get('host')
         self.connection = None
+
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.connection:
+            await self.disconnect()
 
     async def connect(self):
         if not self.connection:
             self.connection = await self.engine.connect()
             self.metadata = metadata
 
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(Database, cls).__new__(cls, *args, **kwargs)
-        return cls._instance
-
-    @classmethod
-    async def get_instance(cls) -> 'Database':
-        if not getattr(cls, '_instance', None):
-            cls._instance = cls()
-        else:
-            await cls._instance.connect()
-        return cls._instance
-
-    @classmethod
-    async def get_class_session(cls) -> AsyncSession:
-        return (await cls.get_instance()).get_session()
+    async def disconnect(self):
+        if self.connection:
+            await self.connection.close()
+            self.connection = None
 
     def get_session(self) -> AsyncSession:
         return sqlalchemy.orm.sessionmaker(bind=self.engine, class_=AsyncSession)()

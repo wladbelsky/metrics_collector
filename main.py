@@ -1,17 +1,23 @@
 import asyncio
-from typing import Any, List
+
+import sqlalchemy.sql
+from dataclasses import dataclass
+from typing import List, Union, Coroutine, Iterable
 from flask import Flask
+
+from connections import connects
 from database import Database, Client
 import util
 
 app = Flask(__name__)
 
 
+@dataclass
 class Metric:
-    def __init__(self, name: str, value: Any, tags: dict):
-        self.name = name
-        self.value = value
-        self.tags = tags
+    name: str
+    tags: dict
+    query: Union[str, Coroutine, sqlalchemy.sql.Selectable]
+    value: str = None
 
     def __str__(self):
         tags = ', '.join([f'{k}="{v}"' for k, v in self.tags.items()])
@@ -20,27 +26,55 @@ class Metric:
         return f"{self.name}{tags} {self.value}"
 
     @classmethod
-    def array_to_str(cls, array: List['Metric']):
-        return "\n".join([str(metric) for metric in array])
+    def array_to_str(cls, array: Iterable['Metric']):
+        return "\n".join([str(metric) for metric in array if isinstance(metric, cls)])
 
+
+def run_all_in_database(db: Database, metrics: List[Metric]) -> List[Coroutine]:
+    async def run_query(metric: Metric):
+        if isinstance(metric.query, (str, sqlalchemy.sql.Selectable)):
+            metric.value = (await db.get_session().execute(metric.query)).one()[0]
+        else:
+            metric.value = await metric.query
+        return metric
+    return [run_query(metric) for metric in metrics]
 
 @app.route('/metrics')
 async def main():
-    await Database.get_instance()
-    coros = [EMK_Send_st2(), EMK_Send_st3()]
-    results = await asyncio.gather(*coros)
+    queries = []
+    connections = [Database(connection) for connection in connects]
+    for connection in connections:
+        await connection.connect()
+        queries.extend(run_all_in_database(connection,
+                                           [
+                                               Metric('EMK_cases_status_2', query=EMK_Send_st2(connection),
+                                                      tags={'host': connection.host}),
+                                               Metric('EMK_cases_status_3', query=EMK_Send_st3(connection),
+                                                      tags={'host': connection.host}),
+                                               Metric('Test', query='select rand()',
+                                                      tags={'host': connection.host})
+                                           ]))
+    results = await asyncio.gather(*queries, return_exceptions=True)
+    for connection in connections:
+        await connection.disconnect()
+    exceptions = filter(lambda x: isinstance(x, Exception), results)
+    results = filter(lambda x: isinstance(x, Metric), results)
+    for exception in exceptions:
+        app.logger.exception(exception)
     return Metric.array_to_str(results)
 
 
-async def EMK_Send_st3():
-    async with await Database.get_class_session() as session:
+async def EMK_Send_st3(db):
+    async with db.get_session() as session:
         count_status2 = (await session.execute(util.IEMK_STATUS_2)).one()
-        return Metric('EMK_cases_status_2', count_status2[0], {'status2': 1})
+        return count_status2[0]
 
 
-async def EMK_Send_st2():
-    async with await Database.get_class_session() as session:
+async def EMK_Send_st2(db):
+    async with db.get_session() as session:
         count_status3 = (await session.execute(util.IEMK_STATUS_3)).one()
-        return Metric('EMK_cases_status_3', count_status3[0], {'status3': 1})
+        return count_status3[0]
 
-app.run(host='0.0.0.0', port=5000)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=9101)
