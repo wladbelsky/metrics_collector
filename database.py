@@ -14,7 +14,7 @@ class Database(object):
     def __init__(self, connection: dict) -> None:
         self.engine = create_async_engine(self.prepare_connection_string(
             connection
-        ), poolclass=NullPool, echo=True)
+        ), poolclass=NullPool, echo=False)
         self.host = connection.get('host')
         self.connection = None
 
