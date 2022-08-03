@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+
+from async_timeout import timeout
 from dataclasses import dataclass, field
 from typing import Any
 from typing import List, Union, Coroutine, Iterable
@@ -10,7 +12,7 @@ import sqlalchemy.sql
 from flask import Flask
 
 import util
-from connections import connects
+from connections import connects, timeout_time
 from database import Database
 
 app = Flask(__name__)
@@ -37,14 +39,21 @@ class Metric:
 
 def run_all_in_database(db: Database, metrics: List[Metric]) -> List[Coroutine]:
     async def run_query(metric: Metric) -> Metric:
-        start = time.perf_counter()
-        if isinstance(metric.query, (str, sqlalchemy.sql.Selectable)):
-            metric.value = (await db.get_session().execute(metric.query)).one()[0]
-        else:
-            metric.value = await metric.query
-        metric.execution_time = time.perf_counter() - start
-        app.logger.info(f'{str(metric)} execution time: {metric.execution_time}')
-        return metric
+        async with timeout(timeout_time):
+            try:
+                start = time.perf_counter()
+                metric.tags['host'] = db.host
+                if isinstance(metric.query, (str, sqlalchemy.sql.Selectable)):
+                    metric.value = (await db.get_session().execute(metric.query)).one()[0]
+                else:
+                    metric.value = await metric.query
+                metric.execution_time = time.perf_counter() - start
+                app.logger.info(f'{str(metric)} execution time: {metric.execution_time}')
+                return metric
+            except Exception as e:
+                app.logger.error(f'{str(metric)} exception occurred: {e}')
+                app.logger.exception(e)
+                raise
     return [run_query(metric) for metric in metrics]
 
 @app.route('/metrics')
@@ -55,10 +64,8 @@ async def main():
         await connection.connect()
         queries.extend(run_all_in_database(connection,
                                            [
-                                               Metric('EMK_cases_status_2', query=EMK_Send_st2(connection),
-                                                      tags={'host': connection.host}),
-                                               Metric('EMK_cases_status_3', query=EMK_Send_st3(connection),
-                                                      tags={'host': connection.host}),
+                                               Metric('EMK_cases_status_2', query=EMK_Send_st2(connection)),
+                                               Metric('EMK_cases_status_3', query=EMK_Send_st3(connection)),
                                               # Metric('Test', query='select rand()',
                                               #        tags={'host': connection.host})
                                            ]))
@@ -69,6 +76,7 @@ async def main():
     results = filter(lambda x: isinstance(x, Metric), results)
     for exception in exceptions:
         app.logger.exception(exception)
+        app.logger.error(exception.__class__.__name__)
     return Metric.array_to_str(results)
 
 
